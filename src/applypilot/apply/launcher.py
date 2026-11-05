@@ -88,30 +88,33 @@ def _make_mcp_config(cdp_port: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def acquire_job(target_url: str | None = None, min_score: int = 7,
-                worker_id: int = 0) -> dict | None:
+                worker_id: int = 0, base_resume: bool = False) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
         target_url: Apply to a specific URL instead of picking from queue.
         min_score: Minimum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
+        base_resume: Also take jobs without a tailored resume; they are given the
+            base resume (~/.applypilot/resume.pdf and resume.txt).
 
     Returns:
         Job dict or None if the queue is empty.
     """
     conn = get_connection()
+    resume_clause = "" if base_resume else "AND tailored_resume_path IS NOT NULL"
     try:
         conn.execute("BEGIN IMMEDIATE")
 
         if target_url:
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
-            row = conn.execute("""
+            row = conn.execute(f"""
                 SELECT url, title, site, application_url, tailored_resume_path,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
                 WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                  AND tailored_resume_path IS NOT NULL
-                  AND apply_status != 'in_progress'
+                  {resume_clause}
+                  AND (apply_status IS NULL OR apply_status != 'in_progress')
                 LIMIT 1
             """, (target_url, target_url, like, like)).fetchone()
         else:
@@ -131,8 +134,8 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 SELECT url, title, site, application_url, tailored_resume_path,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
-                WHERE tailored_resume_path IS NOT NULL
-                  AND (apply_status IS NULL OR apply_status = 'failed')
+                WHERE (apply_status IS NULL OR apply_status = 'failed')
+                  {resume_clause}
                   AND (apply_attempts IS NULL OR apply_attempts < ?)
                   AND fit_score >= ?
                   {site_clause}
@@ -166,7 +169,11 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
         """, (f"worker-{worker_id}", now, row["url"]))
         conn.commit()
 
-        return dict(row)
+        job = dict(row)
+        if base_resume and not job["tailored_resume_path"]:
+            # run_job and the prompt read <path>.txt and <path>.pdf from this stem.
+            job["tailored_resume_path"] = str(config.RESUME_PDF_PATH.with_suffix(""))
+        return job
     except Exception:
         conn.rollback()
         raise
@@ -548,7 +555,8 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str = "sonnet", dry_run: bool = False,
+                base_resume: bool = False) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Args:
@@ -559,6 +567,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         headless: Run Chrome headless.
         model: Claude model name.
         dry_run: Don't click Submit.
+        base_resume: Use the base resume for jobs without a tailored one.
 
     Returns:
         Tuple of (applied_count, failed_count).
@@ -578,7 +587,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                      last_action="waiting for job", actions=0)
 
         job = acquire_job(target_url=target_url, min_score=min_score,
-                          worker_id=worker_id)
+                          worker_id=worker_id, base_resume=base_resume)
         if not job:
             if not continuous:
                 add_event(f"[W{worker_id}] Queue empty")
@@ -653,7 +662,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1,
+         base_resume: bool = False) -> None:
     """Launch the apply pipeline.
 
     Args:
@@ -666,6 +676,7 @@ def main(limit: int = 1, target_url: str | None = None,
         continuous: Run forever, polling for new jobs.
         poll_interval: Seconds between DB polls when queue is empty.
         workers: Number of parallel workers (default 1).
+        base_resume: Use the base resume for jobs without a tailored one.
     """
     global POLL_INTERVAL
     POLL_INTERVAL = poll_interval
@@ -737,6 +748,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     headless=headless,
                     model=model,
                     dry_run=dry_run,
+                    base_resume=base_resume,
                 )
             else:
                 # Multi-worker — distribute limit across workers
@@ -760,6 +772,7 @@ def main(limit: int = 1, target_url: str | None = None,
                             headless=headless,
                             model=model,
                             dry_run=dry_run,
+                            base_resume=base_resume,
                         ): i
                         for i in range(workers)
                     }
