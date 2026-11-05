@@ -75,10 +75,7 @@ def _make_mcp_config(cdp_port: int) -> dict:
                     f"--viewport-size={config.DEFAULTS['viewport']}",
                 ],
             },
-            "gmail": {
-                "command": "npx",
-                "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
-            },
+            # Patched: no mailbox. The agent never sends or reads email; a human does.
         }
     }
 
@@ -327,18 +324,13 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         "--model", model,
         "-p",
         "--mcp-config", str(mcp_config_path),
+        # Patched: none of the user's own MCP servers, only the browser above.
+        "--strict-mcp-config",
         "--permission-mode", "bypassPermissions",
         "--no-session-persistence",
-        "--disallowedTools", (
-            "mcp__gmail__draft_email,mcp__gmail__modify_email,"
-            "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
-            "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
-            "mcp__gmail__create_label,mcp__gmail__update_label,"
-            "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
-            "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
-            "mcp__gmail__list_filters,mcp__gmail__get_filter,"
-            "mcp__gmail__delete_filter"
-        ),
+        # Patched: the agent reads untrusted job pages; it gets the browser and Read, nothing
+        # that runs commands, writes files or fetches other pages.
+        "--disallowedTools", "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Task",
         "--output-format", "stream-json",
         "--verbose", "-",
     ]
