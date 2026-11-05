@@ -19,10 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `searches.yaml` it writes documents `job_type` in a comment.
 - **Custom scoring criteria** - optional `~/.applypilot/scoring_rules.md` is appended to the
   scoring prompt.
+- **Review mode** - `applypilot apply --review` fills one job at a time in a visible window and
+  never submits; you check the form, submit it yourself and answer y/n/q in the terminal
+  (y marks it applied, n returns it to the queue, q stops).
+- **Base resume** - `applypilot apply --base-resume` applies with `~/.applypilot/resume.pdf` to
+  jobs that have no tailored resume, so the tailor stage is optional.
 - **Test suite** - `tests/` with the first tests, so the CI workflow's `pytest tests/` has
   something to run.
 
 ### Fixed
+- **`apply --url` on a job never tried before** - the query compared `apply_status != 'in_progress'`,
+  which is not true for NULL in SQL, so a fresh job was never found.
 - **Empty city in the apply prompt** - an empty or missing `personal.city` rendered as "lives in ,"
   (screening answers) and "based in ." (cover-letter fallback). All three places that print the city
   now use one fallback: city, then country; the location check tries `location.primary` before the

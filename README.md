@@ -183,6 +183,8 @@ applypilot apply --dry-run              # Fill forms without submitting
 applypilot apply --continuous           # Run forever, polling for new jobs
 applypilot apply --headless             # Headless browser mode
 applypilot apply --url URL              # Apply to a specific job
+applypilot apply --review               # Fill one job at a time; you check it, submit it, answer y/n/q
+applypilot apply --base-resume          # Use ~/.applypilot/resume.pdf where no tailored resume exists
 applypilot status                       # Pipeline statistics
 applypilot dashboard                    # Open HTML results dashboard
 ```

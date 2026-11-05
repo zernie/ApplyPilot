@@ -157,8 +157,23 @@ def apply(
     mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    review: bool = typer.Option(
+        False, "--review",
+        help="Fill one job at a time and leave the window open; you submit and answer y/n/q.",
+    ),
+    base_resume: bool = typer.Option(
+        False, "--base-resume",
+        help="Use ~/.applypilot/resume.pdf for jobs without a tailored resume (skips tailoring).",
+    ),
 ) -> None:
     """Launch auto-apply to submit job applications."""
+    if review and (headless or workers != 1 or continuous):
+        console.print(
+            "[red]--review needs a visible window and one job at a time:[/red] "
+            "drop --headless, --workers and --continuous."
+        )
+        raise typer.Exit(code=1)
+
     _bootstrap()
 
     from applypilot.config import check_tier, PROFILE_PATH as _profile_path
@@ -197,8 +212,17 @@ def apply(
         )
         raise typer.Exit(code=1)
 
-    # Check 3: Tailored resumes exist (skip for --gen with --url)
-    if not (gen and url):
+    # Check 3: Tailored resumes exist (skip for --gen with --url), or the base resume does
+    if base_resume:
+        from applypilot.config import RESUME_PATH, RESUME_PDF_PATH
+        missing = [p for p in (RESUME_PDF_PATH, RESUME_PATH) if not p.exists()]
+        if missing:
+            console.print(
+                "[red]--base-resume needs both resume files:[/red] "
+                + ", ".join(str(p) for p in missing)
+            )
+            raise typer.Exit(code=1)
+    elif not (gen and url):
         conn = get_connection()
         ready = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL AND applied_at IS NULL"
@@ -230,6 +254,16 @@ def apply(
         )
         return
 
+    if review:
+        from applypilot.apply.review import review_loop
+
+        console.print("\n[bold blue]Review mode[/bold blue]: the agent fills, you submit.\n")
+        totals = review_loop(target_url=url, min_score=min_score, model=model,
+                             base_resume=base_resume)
+        console.print(f"\nSubmitted: {totals['submitted']}  "
+                      f"Not submitted: {totals['not_submitted']}")
+        return
+
     from applypilot.apply.launcher import main as apply_main
 
     effective_limit = limit if limit is not None else (0 if continuous else 1)
@@ -253,6 +287,7 @@ def apply(
         dry_run=dry_run,
         continuous=continuous,
         workers=workers,
+        base_resume=base_resume,
     )
 
 
